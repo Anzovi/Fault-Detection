@@ -121,8 +121,14 @@ class TSTrendDetection:
                 clustered_ts_cofs, clustered_ts_intercepts)
 
     def predict(self, X):
-        """Prediction using slopes of linear regressions."""
-        pass
+        """
+        Prediction using slopes of linear regressions.
+        if true then anomaly detected in time series
+        """
+
+        _, _, _, _, clustered_ts_cofs, _ = self.fit_mean_shift(X)
+
+        return (clustered_ts_cofs > alpha).any()
 
     def downsample(self, time_series, smoothing_window, skip_window):
         """
