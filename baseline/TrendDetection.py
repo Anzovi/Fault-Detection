@@ -147,13 +147,13 @@ class TSTrendDetection:
         return pd.DataFrame({'time': time_series.index,
                              'value': time_series.values})
 
-    def evaluate_thresholds(self, thresholds, labels):
+    def _binary_cross_entropy(self, threshold, slopes, labels):
         """
-        A method for iterating over threshold values ​​of 
-        the linear regression slope and calculating the F1 metric.
-        Parameters
+        binary cross entropy
         ----------
-        thresholds: list, array:
+        threshold: float:
+            
+        slopes: list, array:
             list of slopes, used as thresholds
         labels: np.ndarray (shape = (samples of cluster, 2)) :
             labeled anomalies: 1 if anomaly, 0 otherwise
@@ -162,19 +162,37 @@ class TSTrendDetection:
         best_threshold: float:
             threshold corresponding to highest f1 score
         """
-        if len(thresholds) < 2:
+        predictions = (slopes >= threshold).astype(int)
+        epsilon = 1e-15
+        predictions = np.clip(predictions, epsilon, 1 - epsilon)
+        bce = -np.mean(labels * np.log(predictions) + (1 - labels) * np.log(1 - predictions))
+        return bce
+
+    def evaluate_thresholds(self, slopes, labels):
+        """
+        A method for finding best threshold using binary cross entropy
+        ----------
+        slopes: list, array:
+            list of slopes of linear regressions,
+        labels: np.ndarray (shape = (samples of cluster, 2)) :
+            labeled anomalies: 1 if anomaly, 0 otherwise
+        Returns
+        -------
+        best_threshold: float:
+            threshold corresponding to best cross entropy result
+        """
+        if len(slopes) < 2:
           raise ValueError("Thresholds list must consist of at least two elements.")
 
-        f1_best_score = 0
-        best_threshold = thresholds[0]
-        for threshold in thresholds:
-            binary_predictions = (thresholds > threshold).astype(int)
-            f1 = f1_score(labels, binary_predictions)
-            if f1_best_score < f1:
-                f1_best_score = f1
-                best_threshold = threshold
+        initial_threshold = np.mean(slopes)
 
-        return best_threshold
+        # binary cross entropy minimization
+        result = minimize(self._binary_cross_entropy, initial_threshold, args=(slopes, labels), bounds=[(min(slopes), max(slopes))])
+        
+        if result.success:
+            optimal_threshold = result.x[0]
+            return optimal_threshold
+        raise Exception("Optimization failed")
 
     def plot_clustering_results(self, X, labels):
         """A method for graphical display of clustering results."""
