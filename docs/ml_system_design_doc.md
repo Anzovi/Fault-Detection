@@ -71,6 +71,9 @@
 #### 2.2. Блок-схема решения    
 ![Блок схема](https://github.com/Anzovi/Fault-Detection/blob/main/docs/Uvelka_Plan.png) 
 
+#### 2.2.2 Архитектура проекта
+![Архитектура проекта](https://github.com/Anzovi/Fault-Detection/blob/main/imgs/PrjArchitecture.jpg) 
+
 #### 2.3. Подготовка данных
 [EDA на небольших данных](https://github.com/Anzovi/Fault-Detection/blob/main/DA/EDA/EDA.ipynb)  
 [EDA на больших данных](https://github.com/Anzovi/Fault-Detection/blob/main/DA/EDA/EDA_v2.ipynb)  
