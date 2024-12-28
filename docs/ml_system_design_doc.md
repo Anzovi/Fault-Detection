@@ -77,7 +77,7 @@
 #### 2.3. Подготовка данных
 [EDA на небольших данных](https://github.com/Anzovi/Fault-Detection/blob/main/DA/EDA/EDA.ipynb)  
 [EDA на больших данных](https://github.com/Anzovi/Fault-Detection/blob/main/DA/EDA/EDA_v2.ipynb)  
-[Идеи и подходы к решению задачи](https://github.com/Anzovi/Fault-Detection/blob/main/DA/EDA/AnomalyDetection_v3.ipynb)  
+[Идеи и подходы к решению задачи, примеры использования baseline](https://github.com/Anzovi/Fault-Detection/blob/main/DA/EDA/AnomalyDetection_v3.ipynb)  
 - Описание данных/сущностей: с регистров датчиков считываются показатели (4 раза в минуту, работаем над тем, чтобы повысить частоту), которые затем отправляются на сервер для обработки. Описание данных:
 
 Пример данных:
