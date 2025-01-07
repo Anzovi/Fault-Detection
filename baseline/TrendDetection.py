@@ -1,11 +1,9 @@
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from sklearn.cluster import MeanShift
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import f1_score
-
+from scipy.optimize import minimize
 
 class TSTrendDetection:
     def __init__(self, bandwidth = 1.0):
@@ -20,11 +18,11 @@ class TSTrendDetection:
         Parameters
         ----------
         X: np.ndarray (shape = (samples_count, 2)) :
-            first samples time
+            first samples timedelta from first sample
             second samples values
         or
         X: pd.DataFrame:
-            has column time
+            has column timedelta from first sample
             has column value
 
         Returns
@@ -43,8 +41,9 @@ class TSTrendDetection:
         clustered_ts_intercepts: list:
             list of intercepts of linear regression
         """
-        
+
         if isinstance(X, pd.DataFrame):
+            X.time = X.time.dt.total_seconds()
             X = X[['time', 'value']].copy().values
         if not isinstance(X, np.ndarray):
             raise ValueError("X must be np.ndarray or pd.DataFrame.")
@@ -120,39 +119,71 @@ class TSTrendDetection:
         return (clustered_ts_time, clustered_ts_value,
                 clustered_ts_cofs, clustered_ts_intercepts)
 
-    def predict(self, X):
+    def predict(self, context, model_input, params=None):
+        """
+        Prediction method for the custom model.
+
+        Parameters:
+        -----------
+        context : Any
+            Ignored in this example. It's a placeholder for additional data or utility methods.
+
+        model_input : tuple
+            The input DataFrame or ndarray classified as normal or has anomaly slope.
+            and alpha threshold.
+
+        params : dict, optional
+            Additional prediction parameters. Ignored.
+
+        Returns:
+        --------
+        bool
+            Has anomaly TS or not.
+        """
+        return self._predict_internal(model_input[0], model_input[1])
+
+    def _predict_internal(self, X, alpha):
         """
         Prediction using slopes of linear regressions.
         if true then anomaly detected in time series
         """
-
         _, _, _, _, clustered_ts_cofs, _ = self.fit_mean_shift(X)
+        return (clustered_ts_cofs > alpha).astype(int)
 
-        return (clustered_ts_cofs > alpha).any()
 
-    def downsample(self, time_series, smoothing_window, skip_window):
+    def downsample(self, X, smoothing_window = None, skip_window = None):
         """
         Method for time series downsampling.
+
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            first column timedelta
+            second column float values
+        Returns:
+        --------
+        pd.DataFrame
+            downsampled X.
         """
-        if not isinstance(time_series, pd.Series):
-            raise ValueError("Time series mus be a pd.Series.")
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("Time series must be a pd.Series.")
+        X = X.copy()
+        if smoothing_window != None:
+            X.value = X.value.rolling(window=smoothing_window,
+                                                    min_periods=1).median()
 
-        time_series = time_series.copy().rolling(window=smoothing_window,
-                                                 min_periods=1).median()
-
-        time_series.index = pd.to_timedelta(time_series.index, unit='s')
-        time_series = time_series.resample(skip_window).median()
-
-
-        return pd.DataFrame({'time': time_series.index,
-                             'value': time_series.values})
+        if (skip_window != None):
+            X.index = X.time
+            X = X.value.resample(skip_window).median().fillna(0)
+            X = pd.DataFrame({'time': X.index, 'value': X.values})
+        return X
 
     def _binary_cross_entropy(self, threshold, slopes, labels):
         """
         binary cross entropy
         ----------
         threshold: float:
-            
+            finding best threshold, by optimizing bce
         slopes: list, array:
             list of slopes, used as thresholds
         labels: np.ndarray (shape = (samples of cluster, 2)) :
@@ -162,10 +193,11 @@ class TSTrendDetection:
         best_threshold: float:
             threshold corresponding to highest f1 score
         """
-        predictions = (slopes >= threshold).astype(int)
+        predictions = (slopes > threshold).astype(int)
         epsilon = 1e-15
         predictions = np.clip(predictions, epsilon, 1 - epsilon)
-        bce = -np.mean(labels * np.log(predictions) + (1 - labels) * np.log(1 - predictions))
+        bce = -np.mean(labels * np.log(predictions) + \
+                       (1 - labels) * np.log(1 - predictions))
         return bce
 
     def evaluate_thresholds(self, slopes, labels):
@@ -187,33 +219,12 @@ class TSTrendDetection:
         initial_threshold = np.mean(slopes)
 
         # binary cross entropy minimization
-        result = minimize(self._binary_cross_entropy, initial_threshold, args=(slopes, labels), bounds=[(min(slopes), max(slopes))])
-        
+        result = minimize(self._binary_cross_entropy, max(slopes),
+                          args=(slopes, labels),
+                          bounds=[(min(slopes), max(slopes) + 3*np.std(slopes))],
+                          method='Powell')
+
         if result.success:
             optimal_threshold = result.x[0]
             return optimal_threshold
         raise Exception("Optimization failed")
-
-    def plot_clustering_results(self, X, labels):
-        """A method for graphical display of clustering results."""
-        plt.plot(X[:, 0], X[:, 1], label='Time Series Data', color='blue')
-        plt.scatter(X[:, 0], X[:, 1], c=labels, cmap='viridis', marker='o')
-        plt.title('Clustering results using Mean Shift')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
-        plt.colorbar(label='Метки кластеров')
-        plt.grid()
-        plt.show()
-
-    def plot_LR_results(self, X, labels, clustered_times, clustered_values):
-        """
-        A method for graphical display of 
-        the results of constructing a linear regression.
-        """
-        plt.plot(X[:, 0], X[:, 1], label='Time Series Data', color='blue')
-        for cluster in np.unique(labels):
-          plt.plot(clustered_times[cluster], clustered_values[cluster],
-                   label='Linear Trend', color='red')
-        plt.legend()
-        plt.grid()
-        plt.show()
