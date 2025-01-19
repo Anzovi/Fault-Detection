@@ -5,7 +5,9 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from scipy.optimize import minimize
 
-class TSTrendDetection:
+from sklearn.metrics import log_loss
+
+class TSTrendDetection():
     def __init__(self, bandwidth = 1.0):
         self.bandwidth = bandwidth
         self.mean_shift = MeanShift(bandwidth = self.bandwidth)
@@ -41,10 +43,11 @@ class TSTrendDetection:
         clustered_ts_intercepts: list:
             list of intercepts of linear regression
         """
+        X = X.copy()
 
         if isinstance(X, pd.DataFrame):
             X.time = X.time.dt.total_seconds()
-            X = X[['time', 'value']].copy().values
+            X = X[['time', 'value']].values
         if not isinstance(X, np.ndarray):
             raise ValueError("X must be np.ndarray or pd.DataFrame.")
 
@@ -196,9 +199,7 @@ class TSTrendDetection:
         predictions = (slopes > threshold).astype(int)
         epsilon = 1e-15
         predictions = np.clip(predictions, epsilon, 1 - epsilon)
-        bce = -np.mean(labels * np.log(predictions) + \
-                       (1 - labels) * np.log(1 - predictions))
-        return bce
+        return log_loss(labels, predictions)
 
     def evaluate_thresholds(self, slopes, labels):
         """
@@ -214,15 +215,15 @@ class TSTrendDetection:
             threshold corresponding to best cross entropy result
         """
         if len(slopes) < 2:
-          raise ValueError("Thresholds list must consist of at least two elements.")
+          return slopes[0]
 
         initial_threshold = np.mean(slopes)
 
         # binary cross entropy minimization
-        result = minimize(self._binary_cross_entropy, max(slopes),
+        result = minimize(self._binary_cross_entropy, np.mean(slopes),
                           args=(slopes, labels),
-                          bounds=[(min(slopes), max(slopes) + 3*np.std(slopes))],
-                          method='Powell')
+                          bounds=[(min(slopes), max(slopes) + 3*np.std(slopes))])#,
+                          #method='Powell')
 
         if result.success:
             optimal_threshold = result.x[0]
