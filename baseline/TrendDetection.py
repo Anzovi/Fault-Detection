@@ -53,7 +53,10 @@ class TSTrendDetection():
 
         # Scaling ts data
         scaler = self.scaler
+
+        print(X)
         X_scaled = scaler.fit_transform(X)
+        print(X_scaled)
 
         # Clustering ts data
         self.mean_shift.fit(X_scaled)
@@ -151,8 +154,8 @@ class TSTrendDetection():
         if true then anomaly detected in time series
         """
         _, _, _, _, clustered_ts_cofs, _ = self.fit_mean_shift(X)
-        return (clustered_ts_cofs > alpha).astype(int)
 
+        return (np.array(clustered_ts_cofs) > alpha).astype(int)
 
     def downsample(self, X, smoothing_window = None, skip_window = None):
         """
