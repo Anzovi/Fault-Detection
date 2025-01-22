@@ -154,8 +154,8 @@ class TSTrendDetection():
         if true then anomaly detected in time series
         """
         _, _, _, _, clustered_ts_cofs, _ = self.fit_mean_shift(X)
-        return (np.array(clustered_ts_cofs) > alpha).astype(int)
 
+        return (np.array(clustered_ts_cofs) > alpha).astype(int)
 
     def downsample(self, X, smoothing_window = None, skip_window = None):
         """
