@@ -54,9 +54,7 @@ class TSTrendDetection():
         # Scaling ts data
         scaler = self.scaler
 
-        print(X)
         X_scaled = scaler.fit_transform(X)
-        print(X_scaled)
 
         # Clustering ts data
         self.mean_shift.fit(X_scaled)
