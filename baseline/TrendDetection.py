@@ -54,9 +54,7 @@ class TSTrendDetection():
         # Scaling ts data
         scaler = self.scaler
 
-        print(X)
         X_scaled = scaler.fit_transform(X)
-        print(X_scaled)
 
         # Clustering ts data
         self.mean_shift.fit(X_scaled)
@@ -65,10 +63,10 @@ class TSTrendDetection():
         # Linear regressions for clustered data
         clusters = np.unique(labels)
 
-        clustered_ts_values = []
-        clustered_ts_times = []
-        clustered_ts_cofs = []
-        clustered_ts_intercepts = []
+        clustered_ts_values = dict()
+        clustered_ts_times = dict()
+        clustered_ts_cofs = dict()
+        clustered_ts_intercepts = dict()
 
         for cluster in clusters:
             clustered_series = X[np.where(labels == cluster)]
@@ -76,10 +74,10 @@ class TSTrendDetection():
             times, values, cof, intercept = self._fit_linear_regression(
                 clustered_series)
 
-            clustered_ts_values.append(values)
-            clustered_ts_times.append(times)
-            clustered_ts_cofs.append(cof[0])
-            clustered_ts_intercepts.append(intercept)
+            clustered_ts_values[cluster] = values
+            clustered_ts_times[cluster]= times
+            clustered_ts_cofs[cluster] = cof[0]
+            clustered_ts_intercepts[cluster] = intercept
 
         return (X, labels, clustered_ts_times, clustered_ts_values,
                 clustered_ts_cofs, clustered_ts_intercepts)
@@ -154,8 +152,7 @@ class TSTrendDetection():
         if true then anomaly detected in time series
         """
         _, _, _, _, clustered_ts_cofs, _ = self.fit_mean_shift(X)
-
-        return (np.array(clustered_ts_cofs) > alpha).astype(int)
+        return (np.array(list(clustered_ts_cofs.values())) > alpha).astype(int)
 
     def downsample(self, X, smoothing_window = None, skip_window = None):
         """
