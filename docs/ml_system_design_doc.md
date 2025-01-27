@@ -163,7 +163,12 @@
 - Замена моделий автоматизировано и производится через celery.
 
 ### 4. Внедрение  
-[Код API сервиса](https://gitlab.com/mluvelka)
+[Код API сервиса](https://gitlab.com/mluvelka)  
+[Код инференса через Celery](https://gitlab.com/mluvelka/celery)  
+Несколько пробных ранов в MLflow по двум этапам:  
+![](https://github.com/Anzovi/Fault-Detection/blob/main/imgs/mlflow_runs.jpg) 
+Разметка сегментов (нормальные/аномальные)
+![](https://github.com/Anzovi/Fault-Detection/blob/main/imgs/mlflow_labeling.jpg) 
 #### 4.1. Архитектура решения  
 ![Архитектура проекта](https://github.com/Anzovi/Fault-Detection/blob/main/imgs/PrjArchitecture.jpg)  
 - Modbus Collector: Модуль сбора данных с датчиков.  
