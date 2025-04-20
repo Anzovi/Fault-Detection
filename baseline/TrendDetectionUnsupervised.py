@@ -171,20 +171,6 @@ class TSTrendDetection:
         for col_idx, stat_name in enumerate(stats_names):
             values = stats_matrix[:, col_idx]
 
-            # Проверка на константные значения или мало данных
-            if len(np.unique(values)) < 2:
-                logging.warning(f"Constant or insufficient unique values for {stat_name}, using median")
-                thresholds.append(np.median(values))
-                continue
-
-            # Проверка наличия нормальных и аномальных значений
-            normal_values = values[labels == 0]
-            anomaly_values = values[labels == 1]
-            if len(normal_values) == 0 or len(anomaly_values) == 0:
-                logging.warning(f"No normal or anomaly values for {stat_name}, using median")
-                thresholds.append(np.median(values))
-                continue
-
             # Обучение решающего дерева
             X = values.reshape(-1, 1)
             y = labels
