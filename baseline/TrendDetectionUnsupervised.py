@@ -194,7 +194,7 @@ class TSTrendDetection:
             # Извлечение порога из корневого узла
             if clf.tree_.node_count > 1:  # Проверка, что дерево имеет разделение
                 threshold = clf.tree_.threshold[0]  # Порог корневого узла
-                print(threshold)
+
                 if threshold == -2:  # -2 означает отсутствие разделения
                     logging.warning(f"No valid split for {stat_name}, using median")
                     threshold = np.median(values)
