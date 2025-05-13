@@ -1,33 +1,45 @@
 import numpy as np
 import pandas as pd
-from sklearn.cluster import MeanShift
-from sklearn.linear_model import LinearRegression
+from sklearn.cluster import MeanShift, KMeans
+from sklearn.linear_model import LinearRegression, TheilSenRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, f1_score
+from sklearn.metrics import mean_squared_error, f1_score, silhouette_score
 from scipy.stats import ks_2samp
+from statsmodels.tsa.stattools import acf
+from statsmodels.tsa.seasonal import STL
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import IsolationForest
 from sklearn.svm import OneClassSVM
 from sklearn.neighbors import LocalOutlierFactor
-from sklearn.cluster import DBSCAN
-#from skmultiflow.drift_detection import ADWIN
 from xgboost import XGBClassifier
 import logging
+import pywt
+import pymannkendall as mk
+from scipy import stats
+from scipy.signal import welch
 
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class TSTrendDetection:
-    def __init__(self, bandwidth=1.0, adwin_delta=0.002):
+    def __init__(self, bandwidth=1.0, use_kmeans=True):
         self.bandwidth = bandwidth
         self.mean_shift = MeanShift(bandwidth=self.bandwidth)
         self.scaler = StandardScaler()
-#        self.adwin = {}  # ADWIN для каждой статистики
-        self.available_stats = ['alpha', 'variance', 'mse', 'amplitude']
-        self.classifier = None  # Для хранения обученной модели классификации
+        self.available_stats = [
+            'alpha', 'variance', 'mse', 'amplitude',
+            'skewness', 'kurtosis', 'abs_energy',
+            'fft_amp1', 'fft_amp2', 'hurst', 'ac1', 'stl_slope',
+            'slope_linreg', 'p_linreg', 'r2_linreg', 'mean',
+            'longest_above', 'longest_below',
+            'mk_trend', 'mk_p', 'ts_slope',
+            ]
 
-    def fit_mean_shift(self, X, use_clustering=True, stats_to_extract=["alpha"]):
+        self.classifier = None  # Для хранения обученной модели классификации
+        self.use_kmeans = use_kmeans
+
+    def fit_mean_shift(self, X, use_clustering=True, stats_to_extract=None, max_k=15):
         """
         Mean Shift model fitting with optional clustering and flexible statistics.
         """
@@ -46,17 +58,30 @@ class TSTrendDetection:
             if not stats_to_extract:
                 raise ValueError("No valid statistics specified.")
 
-        # # Инициализация ADWIN для новых статистик
-        # for stat in stats_to_extract:
-        #     if stat not in self.adwin:
-        #         self.adwin[stat] = ADWIN(delta=0.002)
-
         scaler = self.scaler
         X_scaled = scaler.fit_transform(X)
 
         if use_clustering:
-            self.mean_shift.fit(X_scaled)
-            labels = self.mean_shift.labels_
+            if self.use_kmeans:
+                best_score = -1
+                best_k = 2
+                best_labels = None
+                for k in range(2, max_k + 1):
+                    kmeans = KMeans(n_clusters=k, random_state=11)
+                    labels = kmeans.fit_predict(X_scaled)
+                    try:
+                        score = silhouette_score(X_scaled, labels)
+                        if score > best_score:
+                            best_score = score
+                            best_k = k
+                            best_labels = labels
+                    except:
+                        continue
+
+                labels = best_labels
+            else:
+                mean_shift = MeanShift(bandwidth=self.bandwidth)
+                labels = mean_shift.fit_predict(X_scaled)
         else:
             labels = np.zeros(X.shape[0], dtype=int)
 
@@ -66,8 +91,8 @@ class TSTrendDetection:
         clustered_stats = dict()
 
         for cluster in clusters:
-            clustered_series = X[np.where(labels == cluster)]
-            times, values, stats = self._fit_linear_regression(clustered_series, stats_to_extract)
+            clustered_series = X[labels == cluster]
+            times, values, stats = self.extract_segment_features(clustered_series, stats_to_extract)
 
             clustered_ts_values[cluster] = values
             clustered_ts_times[cluster] = times
@@ -75,29 +100,136 @@ class TSTrendDetection:
 
         return (X, labels, clustered_ts_times, clustered_ts_values, clustered_stats)
 
-    def _fit_linear_regression(self, clustered_series, stats_to_extract):
+    def extract_segment_features(self, clustered_series: np.ndarray, stats_to_extract=None):
         """
-        Fit linear regression and compute selected statistics for a cluster.
+        blank
         """
+        if stats_to_extract is None:
+            stats_to_extract = self.available_stats
+
+        times = clustered_series[:, 0]
+        values = clustered_series[:, 1]
+        stats_dict = {}
+
+        # Линейная регрессия
         model = LinearRegression()
-        X_time = clustered_series[:, 0].reshape(-1, 1)
-        y_values = clustered_series[:, 1].reshape(-1, 1)
+        X_time = times.reshape(-1, 1)
+        y_values = values.reshape(-1, 1)
         model.fit(X_time, y_values)
+        preds = model.predict(X_time).flatten()
 
-        clustered_ts_value = model.predict(X_time)
-        clustered_ts_time = clustered_series[:, 0]
 
-        stats = {}
-        if 'alpha' in stats_to_extract:
-            stats['alpha'] = model.coef_[0][0]
+        # slope, p-value, r2 линейной регрессии
+        if {'alpha', 'p_linreg', 'r2_linreg'} & set(stats_to_extract):
+            try:
+                slope, intercept, r_value, p_value, std_err = stats.linregress(times, values)
+                if 'alpha' in stats_to_extract:
+                    stats_dict['alpha'] = slope
+                if 'p_linreg' in stats_to_extract:
+                    stats_dict['p_linreg'] = p_value
+                if 'r2_linreg' in stats_to_extract:
+                    stats_dict['r2_linreg'] = r_value**2
+            except Exception:
+                stats_dict.update({k: np.nan for k in ['slope_linreg', 'p_linreg', 'r2_linreg'] if k in stats_to_extract})
+
+        # mean, variance, mse, skewness, kurtosis
+        if 'mean' in stats_to_extract:
+            stats_dict['mean'] = np.mean(values)
         if 'variance' in stats_to_extract:
-            stats['variance'] = np.var(clustered_series[:, 1]) if len(clustered_series) > 1 else 0.0
+            stats_dict['variance'] = np.var(values)
         if 'mse' in stats_to_extract:
-            stats['mse'] = mean_squared_error(y_values, clustered_ts_value)
-        if 'amplitude' in stats_to_extract:
-            stats['amplitude'] = np.max(clustered_series[:, 1]) - np.min(clustered_series[:, 1])
+            stats_dict['mse'] = mean_squared_error(y_values, preds)
+        if 'skewness' in stats_to_extract:
+            stats_dict['skewness'] = stats.skew(values)
+        if 'kurtosis' in stats_to_extract:
+            stats_dict['kurtosis'] = stats.kurtosis(values)
 
-        return clustered_ts_time, clustered_ts_value, stats
+        # longest strike above / below mean
+        if 'longest_above' in stats_to_extract or 'longest_below' in stats_to_extract:
+            try:
+                import itertools
+                mean_val = np.mean(values)
+                above = values > mean_val
+                if 'longest_above' in stats_to_extract:
+                    stats_dict['longest_above'] = max((sum(1 for _ in g) for k, g in itertools.groupby(above) if k), default=0)
+                if 'longest_below' in stats_to_extract:
+                    stats_dict['longest_below'] = max((sum(1 for _ in g) for k, g in itertools.groupby(~above) if k), default=0)
+            except Exception:
+                if 'longest_above' in stats_to_extract:
+                    stats_dict['longest_above'] = np.nan
+                if 'longest_below' in stats_to_extract:
+                    stats_dict['longest_below'] = np.nan
+
+        # abs energy
+        if 'abs_energy' in stats_to_extract:
+            stats_dict['abs_energy'] = np.sum(values**2)
+
+        # FFT амплитуды
+        if 'fft_amp1' in stats_to_extract or 'fft_amp2' in stats_to_extract:
+            try:
+                fft = np.fft.rfft(values - np.mean(values))
+                amplitudes = np.abs(fft)
+                if 'fft_amp1' in stats_to_extract:
+                    stats_dict['fft_amp1'] = amplitudes[1] if len(amplitudes) > 1 else np.nan
+                if 'fft_amp2' in stats_to_extract:
+                    stats_dict['fft_amp2'] = amplitudes[2] if len(amplitudes) > 2 else np.nan
+            except Exception:
+                stats_dict['fft_amp1'] = stats_dict['fft_amp2'] = np.nan
+
+        # Mann-Kendall test
+        if 'mk_trend' in stats_to_extract or 'mk_p' in stats_to_extract:
+            try:
+                mk_result = mk.original_test(values)
+                if 'mk_trend' in stats_to_extract:
+                    stats_dict['mk_trend'] = mk_result.trend
+                if 'mk_p' in stats_to_extract:
+                    stats_dict['mk_p'] = mk_result.p
+            except Exception:
+                if 'mk_trend' in stats_to_extract:
+                    stats_dict['mk_trend'] = np.nan
+                if 'mk_p' in stats_to_extract:
+                    stats_dict['mk_p'] = np.nan
+
+        # Theil-Sen slope
+        if 'ts_slope' in stats_to_extract:
+            try:
+                ts_model = TheilSenRegressor()
+                ts_model.fit(X_time, values)
+                stats_dict['ts_slope'] = ts_model.coef_[0]
+            except Exception:
+                stats_dict['ts_slope'] = np.nan
+
+        # Hurst exponent
+        if 'hurst' in stats_to_extract:
+            try:
+                lags = range(2, 20)
+                tau = [np.sqrt(np.std(np.subtract(values[lag:], values[:-lag]))) for lag in lags]
+                poly = np.polyfit(np.log(lags), np.log(tau), 1)
+                stats_dict['hurst'] = poly[0] * 2.0
+            except Exception:
+                stats_dict['hurst'] = np.nan
+
+        # autocorrelation lag-1
+        if 'ac1' in stats_to_extract:
+            try:
+                if np.var(values) == 0:
+                    stats_dict['ac1'] = 0
+                else:
+                    stats_dict['ac1'] = np.corrcoef(values[:-1], values[1:])[0, 1]
+            except Exception:
+                stats_dict['ac1'] = np.nan
+
+        # STL trend slope
+        if 'stl_slope' in stats_to_extract:
+            try:
+                stl = STL(pd.Series(values), period=max(3, len(values) // 2)).fit()
+                trend = stl.trend
+                stl_slope, _, _, _, _ = stats.linregress(np.arange(len(trend)), trend)
+                stats_dict['stl_slope'] = stl_slope
+            except Exception:
+                stats_dict['stl_slope'] = np.nan
+
+        return times, preds, stats_dict
 
     def predict(self, context, model_input, params=None):
         """
@@ -230,7 +362,12 @@ class TSTrendDetection:
         logging.info(f"Predicted {np.sum(predictions)} anomalies out of {len(predictions)} samples")
         return predictions
 
-    def detect_stats_drift(self, stats_matrix, new_stats_matrix, stats_names, window_size=100, drift_threshold=2.0, ks_pvalue=0.05):
+    def effective_sample_size(self, data: np.ndarray, lag: int = 1) -> int:
+        r = acf(data, nlags=lag, fft=False)[lag]
+        n = len(data)
+        return int(n * (1 - r) / (1 + r)) if (1 + r) != 0 else n
+
+    def detect_stats_drift(self, stats_matrix, new_stats_matrix, stats_names, window_size=50, exploitation_dates=None, drift_threshold=2.0, ks_pvalue=0.05):
         """
         Detect drift in the distribution of statistics between historical and new data.
 
@@ -257,16 +394,22 @@ class TSTrendDetection:
         stats_matrix = np.array(stats_matrix)
         new_stats_matrix = np.array(new_stats_matrix)
 
+        if window_size != 50:
+            window_size = self.effective_sample_size(stats_matrix.shape[0])
+            window_size = np.clip(window_size, 50, 250)
+
         if len(stats_names) != stats_matrix.shape[1] or len(stats_names) != new_stats_matrix.shape[1]:
             raise ValueError("stats_names must match the number of columns in stats_matrix and new_stats_matrix.")
-        if stats_matrix.shape[0] < window_size or new_stats_matrix.shape[0] < 10:
+        if stats_matrix.shape[0] < window_size or new_stats_matrix.shape[0] < window_size * 0.4:
             logging.info("Insufficient data for drift detection")
             return {stat_name: {'drift_detected': False, 'stats': {}} for stat_name in stats_names}
 
         results = {}
         for col_idx, stat_name in enumerate(stats_names):
-            historical_values = stats_matrix[-window_size:, col_idx] if stats_matrix.shape[0] > window_size else stats_matrix[:, col_idx]
-            new_values = new_stats_matrix[:, col_idx]
+
+
+            historical_values = stats_matrix[:window_size, col_idx] if stats_matrix.shape[0] > window_size else stats_matrix[:, col_idx]
+            new_values = new_stats_matrix[-window_size:, col_idx] if new_stats_matrix.shape[0] > window_size else new_stats_matrix[:, col_idx]
 
             current_mean = np.mean(new_values)
             current_std = np.std(new_values) if len(new_values) > 1 else 0.0
@@ -303,67 +446,6 @@ class TSTrendDetection:
 
         return results
 
-    def detect_stats_drift_adwin(self, stats_matrix, new_stats_matrix, stats_names):
-        """
-        Detect drift in statistics using ADWIN.
-
-        Parameters
-        ----------
-        stats_matrix: np.ndarray
-            Historical statistics matrix (rows: observations, columns: stats).
-        new_stats_matrix: np.ndarray
-            New statistics matrix (rows: observations, columns: stats).
-        stats_names: list
-            Names of statistics corresponding to columns in stats_matrix.
-
-        Returns
-        -------
-        dict
-            Dictionary with drift detection results for each statistic.
-        """
-        stats_matrix = np.array(stats_matrix)
-        new_stats_matrix = np.array(new_stats_matrix)
-
-        if len(stats_names) != stats_matrix.shape[1] or len(stats_names) != new_stats_matrix.shape[1]:
-            raise ValueError("stats_names must match the number of columns in stats_matrix and new_stats_matrix.")
-        if new_stats_matrix.shape[0] < 1:
-            logging.info("No new data provided for ADWIN drift detection")
-            return {stat_name: {'drift_detected': False, 'stats': {}} for stat_name in stats_names}
-
-        results = {}
-        for col_idx, stat_name in enumerate(stats_names):
-            new_values = new_stats_matrix[:, col_idx]
-            drift_detected = False
-            stats = {
-                'current_mean': np.mean(new_values) if len(new_values) > 0 else 0.0,
-                'n_values': len(new_values)
-            }
-
-            if stat_name not in self.adwin:
-                self.adwin[stat_name] = ADWIN(delta=0.002)
-
-            # Добавляем исторические данные в ADWIN
-            historical_values = stats_matrix[:, col_idx]
-            for value in historical_values:
-                self.adwin[stat_name].add_element(value)
-
-            # Проверяем новые данные
-            for value in new_values:
-                self.adwin[stat_name].add_element(value)
-                if self.adwin[stat_name].detected_change():
-                    drift_detected = True
-                    logging.info(f"ADWIN drift detected for {stat_name} at value={value:.4f}, window size={self.adwin[stat_name].width}")
-
-            stats['adwin_window_size'] = self.adwin[stat_name].width
-            stats['adwin_mean'] = self.adwin[stat_name].estimation
-            stats['drift_detected'] = drift_detected
-
-            results[stat_name] = {
-                'drift_detected': drift_detected,
-                'stats': stats
-            }
-
-        return results
 
     def detect_anomalies(self, stats_matrix, new_stats_matrix, stats_names = None, method='isolation_forest', contamination=0.1, **kwargs):
         """
@@ -397,8 +479,14 @@ class TSTrendDetection:
         if stats_names:
             if len(stats_names) != stats_matrix.shape[1] or len(stats_names) != new_stats_matrix.shape[1]:
                 raise ValueError("stats_names must match the number of columns in stats_matrix and new_stats_matrix.")
+        if stats_matrix.shape[0] <256:
+            logging.warning("Too few observations in general data, returning no anomalies")
+            return {
+                'anomalies': np.zeros(new_stats_matrix.shape[0], dtype=bool),
+                'stats': {'n_anomalies': 0}
+            }
         if new_stats_matrix.shape[0] < 5:
-            logging.warning("Too few observations in new_stats_matrix, returning no anomalies")
+            logging.warning("Too few observations in new data, returning no anomalies")
             return {
                 'anomalies': np.zeros(new_stats_matrix.shape[0], dtype=bool),
                 'stats': {'n_anomalies': 0}
@@ -440,16 +528,6 @@ class TSTrendDetection:
             model.fit(X_train_scaled)
             predictions = model.predict(X_test_scaled)
             anomalies = predictions == -1
-
-        elif method == 'dbscan':
-            model = DBSCAN(
-                eps=kwargs.get('eps', 0.5),
-                min_samples=kwargs.get('min_samples', 5),
-                **kwargs
-            )
-            predictions = model.fit_predict(X_test_scaled)
-            anomalies = predictions == -1
-
         else:
             raise ValueError(f"Unsupported method: {method}")
 
