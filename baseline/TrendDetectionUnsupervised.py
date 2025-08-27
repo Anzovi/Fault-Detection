@@ -102,7 +102,7 @@ class TSTrendDetection:
 
     def extract_segment_features(self, clustered_series: np.ndarray, stats_to_extract=None):
         """
-        blank
+        Utility method for extracting features from selected segment
         """
         if stats_to_extract is None:
             stats_to_extract = self.available_stats
@@ -312,15 +312,11 @@ class TSTrendDetection:
             # Извлечение порога из корневого узла
             if clf.tree_.node_count > 1:  # Проверка, что дерево имеет разделение
                 threshold = clf.tree_.threshold[0]  # Порог корневого узла
-
-                if threshold == -2:  # -2 означает отсутствие разделения
-                    logging.warning(f"No valid split for {stat_name}, using median")
-                    threshold = np.median(values)
             else:
                 logging.warning(f"No split in tree for {stat_name}, using median")
                 threshold = np.median(values)
 
-            # Ограничение порога
+            # Ограничение порога в случае выхода за пределы 
             threshold = np.clip(threshold, np.min(values), np.max(values))
 
             # Оценка F1
@@ -546,3 +542,4 @@ class TSTrendDetection:
             'anomalies': anomalies,
             'stats': stats
         }
+
